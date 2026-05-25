@@ -16,11 +16,11 @@ nk_top = st.sidebar.text_input("위쪽 절반 NK 세포 이름 (Row A~H)", "NK_T
 nk_bottom = st.sidebar.text_input("아래쪽 절반 NK 세포 이름 (Row I~P)", "NK_Bottom")
 
 st.sidebar.subheader("⚙️ 플레이트 맵 설정")
-# E:T Ratio 입력 (위/아래 절반 각각 8개 행에 대응)
-et_input = st.sidebar.text_input("행별 E:T Ratio (위/아래 각각 8개 행 순서대로, 콤마 분리)", "0, 2.5, 5, 10, 20, 40, 80")
+# E:T Ratio 입력 (7개)
+et_input = st.sidebar.text_input("행별 E:T Ratio (위/아래 각각 적용할 행 순서대로, 콤마 분리)", "0, 2.5, 5, 10, 20, 40, 80")
 et_ratios = [float(x.strip()) for x in et_input.split(",")]
 
-# 암세포별 열 매핑 설정 (기본값 설정)
+# 암세포별 열 매핑 설정 
 default_mapping = """SNU2491: 3,4,5
 SNU324: 7,8,9
 MIAPaCa2: 11,12,13
@@ -41,61 +41,72 @@ except Exception as e:
 
 # 데이터 처리 함수
 def process_nk_data(data_block, et_list, cell_map):
-    # data_block: 8 rows x 24 cols numpy array
-    # 1. 롱포맷 데이터프레임 구조 생성
     rows_list = []
+    # 1. 반복구(Replicate) 데이터를 개별적으로 저장
     for r_idx, et in enumerate(et_list):
         for cell_name, cols in cell_map.items():
-            for col in cols:
-                # 플레이트 열 번호(1~24)를 0-based 인덱스로 변환
-                val = data_block[r_idx, col - 1]
+            for rep_idx, col in enumerate(cols):
+                val = data_block[r_idx, col - 1] # 0-based 인덱스 적용
                 rows_list.append({
                     "ET_Ratio": et,
                     "Cancer_Cell": cell_name,
+                    "Replicate": rep_idx + 1, # 1, 2, 3...
                     "Value": val
                 })
     df = pd.DataFrame(rows_list)
     
-    # 2. 각 암세포별 ET_Ratio가 0인 데이터의 평균 구하기
+    # 2. 각 암세포별 ET_Ratio가 0인 3반복 데이터의 "평균" 구하기
     df_et_0 = df[df["ET_Ratio"] == 0]
     et_0_means = df_et_0.groupby("Cancer_Cell")["Value"].mean().to_dict()
     
-    # 3. ET_Ratio 0 평균값으로 나누어 Normalization 수행
+    # 3. 개별 데이터를 ET_Ratio 0 평균값으로 나누어 Normalization 수행
     df["Normalized_Value"] = df.apply(
         lambda row: row["Value"] / et_0_means[row["Cancer_Cell"]] if et_0_means.get(row["Cancer_Cell"], 0) != 0 else np.nan, 
         axis=1
     )
     
-    # 4. 최종 출력 형태로 피벗 (행: ET_Ratio, 열: 암세포별 평균값)
-    # 반복구 실험 데이터의 평균을 내어 최종 리포트 작성
+    # 4. 암세포 이름과 반복수를 결합하여 새로운 열 이름 생성 (예: SNU2491_1, SNU2491_2...)
+    df["Col_Name"] = df["Cancer_Cell"] + "_" + df["Replicate"].astype(str)
+    
+    # 5. 최종 출력 형태로 피벗 (평균 내지 않고 각 반복구를 개별 열로 배치)
     df_pivot = df.pivot_table(
         index="ET_Ratio", 
-        columns="Cancer_Cell", 
+        columns="Col_Name", 
         values="Normalized_Value", 
-        aggfunc="mean"
+        aggfunc="first" 
     )
     
-    # 입력한 ET Ratio 순서대로 정렬 보장
+    # 6. 보기 좋게 열 순서 정렬 (입력한 암세포 순서대로 1, 2, 3 배치)
+    col_order = []
+    for cell in cell_map.keys():
+        for rep_idx in range(len(cell_map[cell])):
+            col_order.append(f"{cell}_{rep_idx + 1}")
+    
+    # 존재하는 열만 필터링 후 적용
+    col_order = [c for c in col_order if c in df_pivot.columns]
+    df_pivot = df_pivot[col_order]
+    
+    # 입력한 ET Ratio 순서대로 행 정렬
     df_pivot = df_pivot.reindex(et_list)
     return df_pivot
 
 # 2. 데이터 처리 및 메인 화면 디스플레이
 if uploaded_file is not None:
-    if len(et_ratios) != 7:
-        st.error("E:T Ratio는 위쪽/아래쪽 각각 8개의 행에 매핑되어야 하므로 정확히 8개의 값을 입력해야 합니다.")
+    # 8줄을 넘어가는 ET Ratio 입력 방지
+    if len(et_ratios) > 8:
+        st.error("E:T Ratio는 위쪽/아래쪽 각각 최대 8개의 행까지만 매핑 가능합니다.")
     else:
         try:
-            # 엑셀 파일 읽기 (헤더 없이 로우 데이터로 로드)
+            # 엑셀 파일 읽기
             df_raw = pd.read_excel(uploaded_file, header=None)
             
-            # 33행부터 49행은 파인썬 인덱스 기준으로 32:49 (49행 미포함 시 17개 행, 보통 16개 행 데이터 + 1개 헤더 구조)
-            # 플레이트 Readout 데이터 블록 추출 (B열~Z열은 파인썬 인덱스 1:26)
-            # 보통 B열은 행 라벨(A~P), C열~Z열이 1~24열 데이터에 해당하므로 2:26으로 슬라이싱합니다.
+            # 플레이트 Readout 데이터 블록 전체 추출 (33행~48행, B열~Z열)
             plate_data = df_raw.iloc[32:48, 2:26].to_numpy(dtype=float)
             
-            # 위 절반 (Row A~H, 0~8행), 아래 절반 (Row I~P, 8~16행) 분리
-            top_block = plate_data[0:8, :]
-            bottom_block = plate_data[8:16, :]
+            # ✨수정된 부분✨: 입력한 ET Ratio 개수(7개)만큼만 위/아래 블록에서 행을 잘라서 가져옴
+            num_et = len(et_ratios)
+            top_block = plate_data[0:num_et, :]         # 위쪽 7줄 (Row A~G)
+            bottom_block = plate_data[8:8+num_et, :]    # 아래쪽 7줄 (Row I~O)
             
             # 데이터 분석 수행
             df_top_res = process_nk_data(top_block, et_ratios, cancer_cells)
@@ -108,7 +119,7 @@ if uploaded_file is not None:
             st.subheader(f"📊 {nk_bottom} 분석 결과 (아래쪽 절반)")
             st.dataframe(df_bottom_res.style.format("{:.4f}"))
             
-            # 3. 엑셀 파일 다운로드 링크 생성 (메모리 버퍼 사용)
+            # 3. 엑셀 파일 다운로드 링크 생성
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_top_res.to_excel(writer, sheet_name=nk_top)
@@ -121,12 +132,12 @@ if uploaded_file is not None:
             st.sidebar.download_button(
                 label="정리된 엑셀 파일 다운로드",
                 data=processed_data,
-                file_name="NK_Screening_Normalized_Result.xlsx",
+                file_name="NK_Screening_Normalized_Result_Replicates.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             st.success("데이터 처리가 완료되었습니다! 왼쪽 사이드바에서 결과 엑셀 파일을 다운로드하세요.")
             
         except Exception as e:
-            st.error(f"파일을 처리하는 중 오류가 발생했습니다. 엑셀 파일의 데이터 위치(33행~49행, B~Z열)가 맞는지 다시 확인해주세요. 오차 원인: {e}")
+            st.error(f"파일을 처리하는 중 오류가 발생했습니다. 오차 원인: {e}")
 else:
     st.info("왼쪽 사이드바에서 플레이트 Readout 엑셀 파일을 업로드해주세요.")
