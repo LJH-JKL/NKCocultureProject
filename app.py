@@ -17,7 +17,7 @@ nk_bottom = st.sidebar.text_input("아래쪽 절반 NK 세포 이름 (Row I~P)",
 
 st.sidebar.subheader("⚙️ 플레이트 맵 설정")
 # E:T Ratio 입력 (위/아래 절반 각각 8개 행에 대응)
-et_input = st.sidebar.text_input("행별 E:T Ratio (위/아래 각각 8개 행 순서대로, 콤마 분리)", "0, 0.5, 1, 2, 5, 10, 20, 40")
+et_input = st.sidebar.text_input("행별 E:T Ratio (위/아래 각각 8개 행 순서대로, 콤마 분리)", "0, 2.5, 5, 10, 20, 40, 80")
 et_ratios = [float(x.strip()) for x in et_input.split(",")]
 
 # 암세포별 열 매핑 설정 (기본값 설정)
@@ -25,7 +25,7 @@ default_mapping = """SNU2491: 3,4,5
 SNU324: 7,8,9
 MIAPaCa2: 11,12,13
 PANC1: 15,16,17
-AsPC1: 19,20,21"""
+BME: 19,20,21"""
 mapping_text = st.sidebar.text_area("암세포별 플레이트 열(Column) 매핑", default_mapping)
 
 # 암세포 매핑 텍스트 파싱
