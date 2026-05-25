@@ -6,20 +6,20 @@ import io
 st.set_page_config(page_title="NK 세포 스크리닝 데이터 정규화 툴", layout="wide")
 
 st.title("🧪 NK 세포 스크리닝 데이터 자동 정규화 툴")
-st.write("플레이트 Readout 엑셀 파일을 업로드하면, 위/아래 각각 설정된 E:T Ratio 순서에 맞춰 ET=0 기준으로 정규화(Normalization)를 수행합니다.")
+st.write("플레이트 Readout 엑셀/CSV 파일을 업로드하면 설정된 플레이트 맵에 따라 정규화를 수행합니다. (A행과 P행은 자동으로 제외됩니다.)")
 
 # 1. 사이드바 및 입력창 설정
 st.sidebar.header("📋 실험 정보 입력")
-uploaded_file = st.sidebar.file_uploader("엑셀 파일 업로드 (.xlsx, .csv)", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("엑셀/CSV 파일 업로드", type=["xlsx", "csv"])
 
-nk_top = st.sidebar.text_input("위쪽 절반 NK 세포 이름 (Row A~H)", "NK_Top")
-nk_bottom = st.sidebar.text_input("아래쪽 절반 NK 세포 이름 (Row I~P)", "NK_Bottom")
+nk_top = st.sidebar.text_input("위쪽 절반 NK 세포 이름 (Row B~H)", "NK_Top")
+nk_bottom = st.sidebar.text_input("아래쪽 절반 NK 세포 이름 (Row I~O)", "NK_Bottom")
 
 st.sidebar.subheader("⚙️ E:T Ratio 방향 설정")
-st.sidebar.caption("위쪽과 아래쪽의 실험 순서가 반대인 점을 반영하여 각각 따로 입력합니다.")
-# ET Ratio 방향을 각각 설정할 수 있도록 분리!
-et_input_top = st.sidebar.text_input("🔼 위쪽 절반 E:T Ratio (Row A부터 7개)", "80, 40, 20, 10, 5, 2.5, 0")
-et_input_bottom = st.sidebar.text_input("🔽 아래쪽 절반 E:T Ratio (Row I부터 7개)", "0, 2.5, 5, 10, 20, 40, 80")
+st.sidebar.caption("위쪽(B행부터)과 아래쪽(I행부터)의 실험 순서에 맞춰 7개의 값을 입력하세요.")
+
+et_input_top = st.sidebar.text_input("🔼 위쪽 절반 E:T Ratio (Row B부터 순서대로)", "80, 40, 20, 10, 5, 2.5, 0")
+et_input_bottom = st.sidebar.text_input("🔽 아래쪽 절반 E:T Ratio (Row I부터 순서대로)", "0, 2.5, 5, 10, 20, 40, 80")
 
 et_ratios_top = [float(x.strip()) for x in et_input_top.split(",")]
 et_ratios_bottom = [float(x.strip()) for x in et_input_bottom.split(",")]
@@ -99,42 +99,42 @@ if uploaded_file is not None:
     num_et_top = len(et_ratios_top)
     num_et_bottom = len(et_ratios_bottom)
     
-    if num_et_top > 8 or num_et_bottom > 8:
-        st.error("E:T Ratio는 위/아래 각각 최대 8개까지만 입력 가능합니다.")
+    if num_et_top > 7 or num_et_bottom > 7:
+        st.error("A행과 P행을 제외하므로 E:T Ratio는 위/아래 각각 최대 7개까지만 입력 가능합니다.")
     else:
         try:
-            # 엑셀 파일 읽기
+            # 엑셀/CSV 파일 읽기
             if uploaded_file.name.endswith('.csv'):
                 df_raw = pd.read_csv(uploaded_file, header=None)
             else:
                 df_raw = pd.read_excel(uploaded_file, header=None)
             
-            # ✨핵심 로직: 엑셀 파일에서 'A'행이 시작되는 위치를 자동으로 탐색
-            # B열(인덱스 1)에서 공백 제거 후 'A' 찾기
+            # 'A'행 위치 자동 탐색
             row_labels = df_raw.iloc[:, 1].astype(str).str.strip()
             a_row_indices = row_labels[row_labels == 'A'].index
             
             if len(a_row_indices) > 0:
-                start_idx = a_row_indices[0] # 완벽하게 A행 시작 위치 찾음
+                start_idx = a_row_indices[0]
             else:
-                start_idx = 33 # 못 찾을 경우 기존의 34행(파이썬 33)을 기본값으로 사용
+                start_idx = 33 
             
-            # 정확히 16행 x 24열 추출
+            # A~P행까지 전체 16행 추출
             plate_data = df_raw.iloc[start_idx:start_idx+16, 2:26].to_numpy(dtype=float)
             
-            # 입력한 ET Ratio 갯수만큼만 데이터 가져오기
-            top_block = plate_data[0:num_et_top, :]         # 위쪽 (Row A ~ 설정한 개수)
-            bottom_block = plate_data[8:8+num_et_bottom, :] # 아래쪽 (Row I ~ 설정한 개수)
+            # ✨수정 포인트: A행(인덱스 0)과 P행(인덱스 15) 건너뛰기
+            # 위쪽은 인덱스 1(B행)부터 7줄, 아래쪽은 인덱스 8(I행)부터 7줄 가져오기
+            top_block = plate_data[1 : 1+num_et_top, :]         
+            bottom_block = plate_data[8 : 8+num_et_bottom, :]   
             
             # 데이터 분석 수행
             df_top_res = process_nk_data(top_block, et_ratios_top, cancer_cells)
             df_bottom_res = process_nk_data(bottom_block, et_ratios_bottom, cancer_cells)
             
             # 화면 출력
-            st.subheader(f"📊 {nk_top} 분석 결과 (위쪽 절반)")
+            st.subheader(f"📊 {nk_top} 분석 결과 (위쪽 절반, Row B~H)")
             st.dataframe(df_top_res.style.format("{:.4f}"))
             
-            st.subheader(f"📊 {nk_bottom} 분석 결과 (아래쪽 절반)")
+            st.subheader(f"📊 {nk_bottom} 분석 결과 (아래쪽 절반, Row I~O)")
             st.dataframe(df_bottom_res.style.format("{:.4f}"))
             
             # 엑셀 다운로드 파일 생성
