@@ -81,7 +81,7 @@ def process_nk_data(data_block, et_list, cell_map):
 
 # 2. 데이터 처리 및 메인 화면 디스플레이
 if uploaded_file is not None:
-    if len(et_ratios) != 8:
+    if len(et_ratios) != 7:
         st.error("E:T Ratio는 위쪽/아래쪽 각각 8개의 행에 매핑되어야 하므로 정확히 8개의 값을 입력해야 합니다.")
     else:
         try:
